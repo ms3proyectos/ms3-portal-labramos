@@ -457,7 +457,7 @@ function renderFoliosList(cerrados){
       <div class="folio-icon">📋</div>
       <div class="folio-body">
         <div class="folio-suc">${esc(f.sucursalNombre||'')} · ${fmtDate(f._fecha||f.creado)}</div>
-        <div class="folio-titulo">${esc(f.titulo||f.disciplina||'Sin título')}</div>
+        <div class="folio-titulo">${esc(f.titulo||f.descripcion||f.categoria||'Sin título')}</div>
         <div class="folio-meta">
           <span style="background:${col}18;color:${col};border:1px solid ${col}40;padding:2px 8px;border-radius:10px;font-size:10px;font-weight:600">${ETAPA_LABEL[et]||et}</span>
           ${f.urgencia==='urgente'?'<span style="font-size:12px">🔴</span>':''}
@@ -475,9 +475,16 @@ function renderFolioDetail(){
   const et=folioEtapaReal(f);
   const flujo=f.flujo||'contratista';
   const etapas=flujo==='janitor'
-    ?['reporte','diagnostico','materiales','autorizacion','bitacora_evidencias','cerrado']
+    ?['reporte','diagnostico','autorizacion','bitacora_evidencias','cerrado']
     :['reporte','diagnostico','orden_trabajo','en_ejecucion','bitacora_evidencias','cerrado'];
-  const curIdx=etapas.indexOf(et);
+
+  // Normalize etapa to pipeline position (handles cotizacion, pendiente_autorizacion, etc.)
+  const ETAPA_POS={reporte:0,diagnostico:1,materiales:2,orden_trabajo:2,cotizacion:2,pendiente_autorizacion:2,autorizacion:3,en_ejecucion:3,bitacora_evidencias:4,bitacora_final:4,cerrado:5};
+  const curPos=ETAPA_POS[et]??-1;
+  // Map curPos to pipeline index
+  const etapaPosList=etapas.map(e=>ETAPA_POS[e]??0);
+  const curIdx=etapaPosList.reduce((best,pos,i)=>pos<=curPos&&pos>=etapaPosList[best]?i:best,0);
+
   const urgEmoji={urgente:'🔴 Urgente',proximo:'🟡 Próximo',programable:'🟢 Programable'};
   const col=ETAPA_COLOR[et]||'#888';
 
@@ -490,104 +497,122 @@ function renderFolioDetail(){
     return `<div class="pip-step">${dot}${lbl}</div>${line}`;
   }).join('');
 
+  // Helper: normalize fotos_adicionales (can be string or {base64,titulo} object)
+  const normFoto=p=>typeof p==='string'?p:(p?.base64||p?.src||'');
+
   // Sections by stage
   let sections='';
 
-  // Reporte / Incidente
-  const r=f.reporteIA||{};
+  // ── Incidente ──────────────────────────────────────────────
   sections+=`<div class="s-card">
     <div class="s-card-title">📝 INCIDENTE</div>
     <div class="d-grid">
-      ${f.titulo?`<div><div class="d-lbl">Título</div><div class="d-val" style="font-weight:600">${esc(f.titulo)}</div></div>`:''}
+      ${f.titulo||f.descripcion?`<div style="grid-column:1/-1"><div class="d-lbl">Descripción</div><div class="d-val" style="font-weight:600;line-height:1.5">${esc(f.titulo||f.descripcion)}</div></div>`:''}
       ${f.disciplina||f.categoria?`<div><div class="d-lbl">Disciplina</div><div class="d-val">${esc(f.disciplina||f.categoria)}</div></div>`:''}
       ${f.urgencia?`<div><div class="d-lbl">Urgencia</div><div class="d-val">${urgEmoji[f.urgencia]||f.urgencia}</div></div>`:''}
       ${f.reportante?`<div><div class="d-lbl">Reportado por</div><div class="d-val">${esc(f.reportante)}</div></div>`:''}
-      ${f.descripcion?`<div style="grid-column:1/-1"><div class="d-lbl">Descripción</div><div class="d-val" style="color:var(--muted);line-height:1.5">${esc(f.descripcion)}</div></div>`:''}
+      ${f.descripcion&&f.titulo?`<div style="grid-column:1/-1"><div class="d-lbl">Detalle</div><div class="d-val" style="color:var(--muted);line-height:1.5">${esc(f.descripcion)}</div></div>`:''}
     </div>
     ${f.fotoBase64?`<div class="photo-row"><img class="photo-thumb" src="${f.fotoBase64}" onclick="window.open(this.src)"></div>`:''}
-    ${(f.fotos_adicionales||[]).length?`<div class="photo-row">${f.fotos_adicionales.map(p=>`<img class="photo-thumb" src="${p}" onclick="window.open(this.src)">`).join('')}</div>`:''}
+    ${(f.fotos_adicionales||[]).filter(p=>normFoto(p)).length?`<div class="photo-row">${(f.fotos_adicionales||[]).map(p=>normFoto(p)).filter(Boolean).map(s=>`<img class="photo-thumb" src="${s}" onclick="window.open(this.src)">`).join('')}</div>`:''}
   </div>`;
 
-  // Diagnóstico
-  if(f.diagnostico&&curIdx>=etapas.indexOf('diagnostico')){
+  // ── Diagnóstico ─────────────────────────────────────────────
+  if(f.diagnostico){
     const d=f.diagnostico;
     sections+=`<div class="s-card">
       <div class="s-card-title">🔍 DIAGNÓSTICO</div>
-      ${d.descripcion?`<div style="font-size:13px;line-height:1.6;color:var(--muted)">${esc(d.descripcion)}</div>`:''}
-      <div class="d-grid" style="margin-top:8px">
-        ${d.causa_raiz?`<div><div class="d-lbl">Causa raíz</div><div class="d-val">${esc(d.causa_raiz)}</div></div>`:''}
-        ${d.solucion_propuesta?`<div><div class="d-lbl">Solución propuesta</div><div class="d-val">${esc(d.solucion_propuesta)}</div></div>`:''}
-        ${d.tiempo_estimado?`<div><div class="d-lbl">Tiempo estimado</div><div class="d-val">${esc(d.tiempo_estimado)}</div></div>`:''}
-        ${d.costo_estimado?`<div><div class="d-lbl">Costo estimado</div><div class="d-val">$${Number(d.costo_estimado).toLocaleString('es-MX')} MXN</div></div>`:''}
+      ${d.situacion_actual?`<div style="font-size:13px;line-height:1.6;color:var(--muted);margin-bottom:8px">${esc(d.situacion_actual)}</div>`:''}
+      <div class="d-grid">
+        ${d.propuesta_solucion?`<div style="grid-column:1/-1"><div class="d-lbl">Solución propuesta</div><div class="d-val">${esc(d.propuesta_solucion)}</div></div>`:''}
+        ${d.analizado_por?`<div><div class="d-lbl">Analizado por</div><div class="d-val">${esc(d.analizado_por)}</div></div>`:''}
+        ${d.fecha?`<div><div class="d-lbl">Fecha</div><div class="d-val">${fmtDate(d.fecha)}</div></div>`:''}
       </div>
     </div>`;
   }
 
-  // Cotizaciones (contratista flow)
-  if((f.cotizaciones||[]).length&&curIdx>=etapas.indexOf('orden_trabajo')){
+  // ── Cotizaciones ────────────────────────────────────────────
+  if((f.cotizaciones||[]).length){
     const cots=f.cotizaciones;
     sections+=`<div class="s-card">
       <div class="s-card-title">📋 COTIZACIONES</div>
-      ${cots.map(c=>`<div style="padding:10px;background:var(--bg4);border-radius:7px;margin-bottom:6px;display:flex;justify-content:space-between;align-items:center;flex-wrap:wrap;gap:6px">
-        <div>
-          <div style="font-size:13px;font-weight:600">${esc(c.proveedor)}</div>
-          ${c.incluye?`<div style="font-size:11px;color:var(--muted)">${esc(c.incluye)}</div>`:''}
-        </div>
-        <div style="text-align:right">
-          <div style="font-size:14px;font-weight:700;color:var(--gold)">$${Number(c.monto||0).toLocaleString('es-MX')}</div>
-          ${c.seleccionada?`<span style="font-size:10px;color:var(--green)">✓ Seleccionada</span>`:''}
-        </div>
-      </div>`).join('')}
+      ${cots.map(c=>{
+        const hasLink=c.link_cotizacion||c.data;
+        const linkHref=c.link_cotizacion||(c.data?`data:${c.tipo||'application/pdf'};base64,${c.data}`:'');
+        const linkName=c.nombre||c.proveedor||'cotizacion.pdf';
+        return `<div style="padding:10px;background:var(--bg4);border-radius:7px;margin-bottom:6px">
+          <div style="display:flex;justify-content:space-between;align-items:flex-start;flex-wrap:wrap;gap:6px">
+            <div>
+              ${c.proveedor?`<div style="font-size:13px;font-weight:600">${esc(c.proveedor)}</div>`:''}
+              ${c.incluye?`<div style="font-size:11px;color:var(--muted);margin-top:2px">${esc(c.incluye)}</div>`:''}
+              ${c.plazo_dias?`<div style="font-size:11px;color:var(--muted)">Plazo: ${c.plazo_dias} días</div>`:''}
+            </div>
+            <div style="text-align:right;flex-shrink:0">
+              ${c.monto?`<div style="font-size:14px;font-weight:700;color:var(--gold)">$${Number(c.monto||0).toLocaleString('es-MX')} MXN</div>`:''}
+              ${c.seleccionada?`<div style="font-size:10px;color:var(--green);font-weight:600">✓ Seleccionada</div>`:''}
+            </div>
+          </div>
+          ${hasLink?`<div style="margin-top:8px"><a href="${linkHref}" target="_blank" download="${esc(linkName)}" style="font-size:11px;color:var(--blue);text-decoration:none;border:1px solid #1565c040;padding:4px 10px;border-radius:5px;display:inline-block">⬇ Descargar PDF →</a></div>`:''}
+        </div>`;
+      }).join('')}
     </div>`;
   }
 
-  // Autorización
-  if(f.autorizacion&&curIdx>=etapas.indexOf('autorizacion')){
+  // ── Autorización ────────────────────────────────────────────
+  if(f.autorizacion){
     const a=f.autorizacion;
+    const authColor=a.estado==='autorizado'?'var(--green)':a.estado==='rechazado'?'var(--red)':'var(--yellow)';
+    const authLabel=a.estado==='autorizado'?'✅ Autorizado':a.estado==='rechazado'?'❌ Rechazado':'⏳ Pendiente';
+    // Monto aprobado: from selected cotización
+    const cotIdx=a.cotizacionSeleccionadaIdx;
+    const cotSel=cotIdx!=null?(f.cotizaciones||[])[cotIdx]:((f.cotizaciones||[]).find(c=>c.seleccionada));
     sections+=`<div class="s-card">
       <div class="s-card-title">✅ AUTORIZACIÓN</div>
+      <div style="display:inline-block;padding:4px 12px;border-radius:10px;font-size:11px;font-weight:700;color:${authColor};border:1px solid ${authColor}40;background:${authColor}15;margin-bottom:10px">${authLabel}</div>
       <div class="d-grid">
-        ${a.autorizado_por?`<div><div class="d-lbl">Autorizado por</div><div class="d-val">${esc(a.autorizado_por)}</div></div>`:''}
+        ${a.autorizadoPor?`<div><div class="d-lbl">Autorizado por</div><div class="d-val">${esc(a.autorizadoPor)}</div></div>`:''}
         ${a.fecha?`<div><div class="d-lbl">Fecha</div><div class="d-val">${fmtDate(a.fecha)}</div></div>`:''}
-        ${a.monto_aprobado?`<div><div class="d-lbl">Monto aprobado</div><div class="d-val">$${Number(a.monto_aprobado).toLocaleString('es-MX')} MXN</div></div>`:''}
-        ${a.observaciones?`<div style="grid-column:1/-1"><div class="d-lbl">Observaciones</div><div class="d-val" style="color:var(--muted)">${esc(a.observaciones)}</div></div>`:''}
+        ${cotSel?.monto?`<div><div class="d-lbl">Monto aprobado</div><div class="d-val" style="color:var(--gold)">$${Number(cotSel.monto).toLocaleString('es-MX')} MXN</div></div>`:''}
+        ${a.comentario?`<div style="grid-column:1/-1"><div class="d-lbl">Comentario</div><div class="d-val" style="color:var(--muted)">${esc(a.comentario)}</div></div>`:''}
       </div>
     </div>`;
   }
 
-  // Bitácora de trabajo / avances
+  // ── Bitácora ────────────────────────────────────────────────
   if((f.bitacora||[]).length){
-    const entradas=f.bitacora;
+    const entradas=[...(f.bitacora||[])].sort((a,b)=>(a.fecha||a.ts||'').localeCompare(b.fecha||b.ts||''));
     sections+=`<div class="s-card">
       <div class="s-card-title">🔧 BITÁCORA DE TRABAJO (${entradas.length} entradas)</div>
       ${entradas.map(e=>`<div style="padding:10px;background:var(--bg4);border-radius:7px;margin-bottom:6px">
         <div style="display:flex;justify-content:space-between;gap:8px;margin-bottom:4px">
-          <span style="font-size:11px;font-weight:600;color:var(--gold)">${esc(e.tipo||'Avance')}</span>
+          <span style="font-size:11px;font-weight:600;color:var(--gold)">${esc(e.tipo||e.accion||'Avance')}</span>
           <span style="font-size:10px;color:var(--muted)">${fmtDate(e.fecha||e.ts)}</span>
         </div>
-        <div style="font-size:12px;line-height:1.5;color:var(--muted)">${esc(e.texto||e.descripcion||'')}</div>
+        <div style="font-size:12px;line-height:1.5;color:var(--muted)">${esc(e.texto||e.descripcion||e.notas||'')}</div>
         ${e.foto?`<div class="photo-row"><img class="photo-thumb" src="${e.foto}" onclick="window.open(this.src)"></div>`:''}
+        ${e.autor?`<div style="font-size:10px;color:var(--muted);margin-top:4px">— ${esc(e.autor)}</div>`:''}
       </div>`).join('')}
     </div>`;
   }
 
-  // Evidencias + PDF
-  if(curIdx>=etapas.indexOf('bitacora_evidencias')){
+  // ── Evidencias + PDF ─────────────────────────────────────────
+  const etapaAvanzada=curPos>=4||f.etapa==='bitacora_evidencias'||f.etapa==='bitacora_final'||f.etapa==='cerrado';
+  if(etapaAvanzada||f.reporte_avance){
     const rpt=f.reporte_avance;
+    const fotosBit=(f.bitacora||[]).filter(e=>e.foto);
     sections+=`<div class="s-card">
       <div class="s-card-title">📸 EVIDENCIAS</div>
       ${rpt?`<div style="margin-bottom:12px">
-        <a class="pdf-link" href="${rpt.url}" target="_blank" download>
+        <a class="pdf-link" href="${rpt.url}" target="_blank" download="${esc(rpt.nombre||'Reporte de Avance.pdf')}">
           📄 ${esc(rpt.nombre||'Reporte de Avance.pdf')}
           <span style="font-size:11px;opacity:.7;margin-left:4px">Descargar →</span>
         </a>
-      </div>`:'<div style="font-size:12px;color:var(--muted);margin-bottom:10px">Sin reporte PDF adjunto</div>'}
-      ${(f.bitacora||[]).filter(e=>e.foto).length?
-        `<div class="photo-row">${(f.bitacora||[]).filter(e=>e.foto).map(e=>`<img class="photo-thumb" src="${e.foto}" onclick="window.open(this.src)">`).join('')}</div>`:''}
+      </div>`:`<div style="font-size:12px;color:var(--muted);margin-bottom:10px">Sin reporte PDF adjunto</div>`}
+      ${fotosBit.length?`<div class="photo-row">${fotosBit.map(e=>`<img class="photo-thumb" src="${e.foto}" onclick="window.open(this.src)">`).join('')}</div>`:''}
     </div>`;
   }
 
-  // Cierre
+  // ── Cierre ───────────────────────────────────────────────────
   if(f.etapa==='cerrado'&&f.cierre){
     const c=f.cierre;
     sections+=`<div class="s-card" style="border-left:3px solid var(--green)">
