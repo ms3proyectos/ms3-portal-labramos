@@ -321,8 +321,8 @@ async function showApp(){
 // ══════════════════════════════════════════════════════════
 function setTab(tab){
   _tab=tab; _view='list'; _activeBranch=null; _activeFolio=null; _cityFilter='all';
-  ['dashboard','folios','hist'].forEach(t=>document.getElementById('tab-'+t).classList.toggle('active',
-    t===(tab==='historial'?'hist':tab)));
+  ['dash','folios','hist'].forEach(t=>document.getElementById('tab-'+t).classList.toggle('active',
+    t===(tab==='historial'?'hist':tab==='dashboard'?'dash':tab)));
   render();
 }
 
